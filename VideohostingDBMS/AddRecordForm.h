@@ -4,7 +4,6 @@ namespace VideohostingDBMS {
     using namespace System;
     using namespace System::Collections::Generic;
     using namespace System::Windows::Forms;
-    using namespace System::IO;
 
     public ref class AddRecordForm : public Form {
     public:
@@ -14,40 +13,52 @@ namespace VideohostingDBMS {
             InitializeDynamicControls();
         }
 
-        property List<String^>^ Values{
-            List<String^> ^ get() { return textBoxValues; }
+        property List<String^>^ Values {
+            List<String^>^ get() { return textBoxValues; }
         }
 
     private:
         List<String^>^ columnNames;
-        List<Control^>^ inputControls = gcnew List<Control^>();
+        List<TextBox^>^ textBoxes = gcnew List<TextBox^>();
+        List<Label^>^ labels = gcnew List<Label^>();
         List<String^>^ textBoxValues = gcnew List<String^>();
+        List<Button^>^ browseButtons = gcnew List<Button^>(); // Для кнопок выбора файла
 
         void InitializeDynamicControls() {
             int yPosition = 10;
-            for each(String ^ columnName in columnNames) {
+            for each (String ^ columnName in columnNames) {
+                // Label
                 Label^ label = gcnew Label();
                 label->Text = columnName + ":";
                 label->Location = System::Drawing::Point(10, yPosition);
                 label->AutoSize = true;
                 this->Controls->Add(label);
+                labels->Add(label);
 
+                // TextBox или элементы для preview_image
                 if (columnName == "preview_image") {
-                    // Кнопка для выбора изображения
-                    Button^ imageButton = gcnew Button();
-                    imageButton->Text = "Выбрать изображение";
-                    imageButton->Location = System::Drawing::Point(150, yPosition);
-                    imageButton->Click += gcnew EventHandler(this, &AddRecordForm::OnImageSelect);
-                    this->Controls->Add(imageButton);
-                    inputControls->Add(imageButton);
+                    TextBox^ textBox = gcnew TextBox();
+                    textBox->Location = System::Drawing::Point(150, yPosition);
+                    textBox->Width = 150;
+                    textBox->ReadOnly = true;
+                    textBoxes->Add(textBox);
+
+                    Button^ browseButton = gcnew Button();
+                    browseButton->Text = "Обзор...";
+                    browseButton->Location = System::Drawing::Point(310, yPosition);
+                    browseButton->Tag = textBox; // Связываем кнопку с TextBox
+                    browseButton->Click += gcnew EventHandler(this, &AddRecordForm::OnBrowseClick);
+                    browseButtons->Add(browseButton);
+                    this->Controls->Add(browseButton);
+
+                    this->Controls->Add(textBox);
                 }
                 else {
-                    // Обычные текстовые поля
                     TextBox^ textBox = gcnew TextBox();
                     textBox->Location = System::Drawing::Point(150, yPosition);
                     textBox->Width = 200;
+                    textBoxes->Add(textBox);
                     this->Controls->Add(textBox);
-                    inputControls->Add(textBox);
                 }
 
                 yPosition += 30;
@@ -66,39 +77,47 @@ namespace VideohostingDBMS {
             cancelButton->Click += gcnew EventHandler(this, &AddRecordForm::OnCancelClick);
             this->Controls->Add(cancelButton);
 
+            // Адаптируем размер формы
             this->ClientSize = System::Drawing::Size(400, yPosition + 80);
             this->Text = "Добавить запись";
             this->StartPosition = FormStartPosition::CenterParent;
         }
 
-        void OnImageSelect(Object^ sender, EventArgs^ e) {
+        void OnBrowseClick(Object^ sender, EventArgs^ e) {
+            Button^ button = dynamic_cast<Button^>(sender);
+            TextBox^ textBox = dynamic_cast<TextBox^>(button->Tag);
+            if (!textBox) return;
+
             OpenFileDialog^ openFileDialog = gcnew OpenFileDialog();
-            openFileDialog->Filter = "Image Files(*.BMP;*.JPG;*.GIF;*.PNG)|*.BMP;*.JPG;*.GIF;*.PNG";
+            openFileDialog->Filter = "Image Files (*.jpg, *.png)|*.JPG;*.PNG";
             if (openFileDialog->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
-                String^ filePath = openFileDialog->FileName;
-                try {
-                    array<Byte>^ imageData = File::ReadAllBytes(filePath);
-                    pin_ptr<Byte> pinnedData = &imageData[0];
-                    // Преобразуем в Base64 с префиксом для распознавания в executeNonQuery
-                    String^ base64 = Convert::ToBase64String(imageData);
-                    textBoxValues->Add("BLOB:" + base64); // Префикс для обработки
-                }
-                catch (Exception^ ex) {
-                    MessageBox::Show("Ошибка чтения файла: " + ex->Message);
-                }
+                textBox->Text = openFileDialog->FileName; // Сохраняем путь к файлу
             }
         }
 
         void OnOkClick(Object^ sender, EventArgs^ e) {
-            for each(Control ^ control in inputControls) {
-                if (control->GetType() == TextBox::typeid) {
-                    textBoxValues->Add(safe_cast<TextBox^>(control)->Text);
+            bool hasEmptyPreview = false;
+            for each(TextBox ^ textBox in textBoxes) {
+                if (textBox->Text == "") {
+                    // Проверка, является ли текущее поле foreign key (translation_id)
+                    String^ columnName = labels[textBoxes->IndexOf(textBox)]->Text;
+                    if (columnName == "translation_id:") {
+                        textBoxValues->Add("NULL"); // Отправляем NULL для foreign key
+                    }
+                    else {
+                        textBoxValues->Add(""); // Для остальных полей — пустая строка
+                    }
                 }
-                else if (control->GetType() == Button::typeid && control->Text == "Выбрать изображение") {
-                    // Значение уже добавлено в OnImageSelect
-                    continue;
+                else {
+                    textBoxValues->Add(textBox->Text);
                 }
             }
+
+            if (hasEmptyPreview) {
+                MessageBox::Show("Выберите изображение для preview_image!", "Ошибка", MessageBoxButtons::OK, MessageBoxIcon::Error);
+                return;
+            }
+
             this->DialogResult = System::Windows::Forms::DialogResult::OK;
             this->Close();
         }
@@ -110,9 +129,9 @@ namespace VideohostingDBMS {
 
         void InitializeComponent() {
             this->SuspendLayout();
-            this->AutoScaleDimensions = Drawing::SizeF(6, 13);
+            this->AutoScaleDimensions = System::Drawing::SizeF(6, 13);
             this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
-            this->ClientSize = Drawing::Size(400, 300);
+            this->ClientSize = System::Drawing::Size(400, 300);
             this->Name = "AddRecordForm";
             this->ResumeLayout(false);
         }

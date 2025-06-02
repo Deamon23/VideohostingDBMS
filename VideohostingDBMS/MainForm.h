@@ -141,8 +141,6 @@ namespace VideohostingDBMS {
             this->dataGridView1->RowsDefaultCellStyle->WrapMode = System::Windows::Forms::DataGridViewTriState::False;
             this->dataGridView1->RowHeadersWidthSizeMode = System::Windows::Forms::DataGridViewRowHeadersWidthSizeMode::EnableResizing;
             this->dataGridView1->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::None;
-
-
             // 
             // MainForm
             // 
@@ -235,8 +233,7 @@ namespace VideohostingDBMS {
 
                     std::string sql = "INSERT INTO " + table + " (" + columnsPart + ") VALUES (" + valuesPart + ")";
                     if (!dbManager->executeNonQuery(sql, params)) {
-                        MessageBox::Show("Ошибка добавления записи!", "Ошибка");
-                    }
+                        MessageBox::Show("Ошибка добавления записи!", "Ошибка");                    }
                     else {
                         MessageBox::Show("Запись добавлена успешно!", "Успех");
                         TablesComboBox_SelectedIndexChanged(nullptr, nullptr); // Обновить данные

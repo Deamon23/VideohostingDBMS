@@ -1,6 +1,9 @@
 #include "DatabaseManager.h"
 #include <iostream>
 #include <sys/stat.h>
+#include <fstream>
+#include <vector>
+
 
 DatabaseManager::DatabaseManager() : db(nullptr), isConnected(false) {}
 
@@ -90,11 +93,23 @@ std::vector<std::vector<std::string>> DatabaseManager::executeQuery(const std::s
     return resultData;
 }
 
+std::vector<unsigned char> readFile(const std::string& filename) {
+    std::ifstream file(filename, std::ios::binary | std::ios::ate);
+    if (!file) return {};
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<unsigned char> buffer(size);
+    if (file.read(reinterpret_cast<char*>(buffer.data()), size))
+        return buffer;
+    return {};
+}
+
 bool DatabaseManager::executeNonQuery(const std::string& query, const std::vector<std::string>& params) {
     if (!isConnected) {
         std::cerr << "База данных не подключена" << std::endl;
         return false;
     }
+
     sqlite3_stmt* stmt;
     int result = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr);
     if (result != SQLITE_OK) {
@@ -102,39 +117,37 @@ bool DatabaseManager::executeNonQuery(const std::string& query, const std::vecto
         return false;
     }
 
+    // Привязка параметров
     for (size_t i = 0; i < params.size(); ++i) {
         const std::string& param = params[i];
         if (param == "NULL") {
             sqlite3_bind_null(stmt, i + 1);
         }
-        else if (param.rfind("BLOB:", 0) == 0) { // Обработка BLOB
-            std::string base64Data = param.substr(5); // Удаляем префикс
-            std::string decodedData;
-            try {
-                array<Byte>^ decodedBytes = Convert::FromBase64String(gcnew String(base64Data.c_str()));
-                pin_ptr<Byte> pinnedData = &decodedBytes[0];
-                decodedData.assign(reinterpret_cast<const char*>(pinnedData), decodedBytes->Length);
-            }
-            catch (...) {
-                std::cerr << "Ошибка декодирования Base64" << std::endl;
-                sqlite3_finalize(stmt);
-                return false;
-            }
-            sqlite3_bind_blob(stmt, i + 1, decodedData.data(), decodedData.size(), SQLITE_STATIC);
-        }
-        else { // Обработка чисел и текста
-            char* end;
-            long longVal = strtol(param.c_str(), &end, 10);
-            if (*end == '\0') {
-                sqlite3_bind_int(stmt, i + 1, static_cast<int>(longVal));
-            }
-            else {
-                double doubleVal = std::strtod(param.c_str(), &end);
-                if (*end == '\0') {
-                    sqlite3_bind_double(stmt, i + 1, doubleVal);
+        else {
+            // Проверяем, является ли параметр путем к файлу
+            if (fileExists(param)) {
+                auto blobData = readFile(param);
+                if (!blobData.empty()) {
+                    sqlite3_bind_blob(stmt, i + 1, blobData.data(), blobData.size(), SQLITE_TRANSIENT);
                 }
                 else {
-                    sqlite3_bind_text(stmt, i + 1, param.c_str(), -1, SQLITE_STATIC);
+                    sqlite3_bind_null(stmt, i + 1);
+                }
+            }
+            else {
+                char* end;
+                long longVal = strtol(param.c_str(), &end, 10);
+                if (*end == '\0') {
+                    sqlite3_bind_int(stmt, i + 1, static_cast<int>(longVal));
+                }
+                else {
+                    double doubleVal = std::strtod(param.c_str(), &end);
+                    if (*end == '\0') {
+                        sqlite3_bind_double(stmt, i + 1, doubleVal);
+                    }
+                    else {
+                        sqlite3_bind_text(stmt, i + 1, param.c_str(), -1, SQLITE_STATIC);
+                    }
                 }
             }
         }
@@ -146,21 +159,9 @@ bool DatabaseManager::executeNonQuery(const std::string& query, const std::vecto
         sqlite3_finalize(stmt);
         return false;
     }
+
     sqlite3_finalize(stmt);
     return true;
-}
-
-std::vector<std::string> DatabaseManager::getTableImageColumns(const std::string& tableName) {
-    std::vector<std::string> imageColumns;
-    std::string query = "PRAGMA table_info(" + tableName + ");";
-    auto result = executeQuery(query);
-    for (const auto& row : result) {
-        // row[1] - имя столбца, row[2] - тип
-        if (row.size() >= 3 && row[2] == "BLOB") {
-            imageColumns.push_back(row[1]);
-        }
-    }
-    return imageColumns;
 }
 
 bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGridView^ dataGridView,
@@ -213,10 +214,8 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
             textColumn->HeaderText = gcnew String(columnName.c_str());
             textColumn->AutoSizeMode =
                 System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
-            dataGridView->Columns->Add(textColumn);
-        }
+            dataGridView->Columns->Add(textColumn);        }
     }
-
     // Выполняем SQL-запрос для получения данных
     std::string dataQuery = "SELECT * FROM " + tableName + ";";
     sqlite3_stmt* stmt;
