@@ -155,66 +155,80 @@ bool DatabaseManager::executeNonQuery(const std::string& query, const std::vecto
 bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGridView^ dataGridView,
     const std::string& tableName) {
     if (!isConnected) {
-        MessageBox::Show("База данных не подключена", "Ошибка");
+        std::cerr << "База данных не подключена" << std::endl;
         return false;
     }
+
     // Очистка предыдущих данных
     dataGridView->DataSource = nullptr;
     dataGridView->Columns->Clear();
+
     // Создаем новую DataTable
     System::Data::DataTable^ table = gcnew System::Data::DataTable();
-    // Получаем информацию о столбцах таблицы
+
+    // Получаем информацию о столбцах
     std::string columnsQuery = "PRAGMA table_info(" + tableName + ");";
     std::vector<std::string> columnNames;
     auto columnRows = executeQuery(columnsQuery);
     for (const auto& row : columnRows) {
         if (row.size() >= 2) {
-            columnNames.push_back(row[1]);
+            std::string columnName = row[1];
+            // Исключаем первичные ключи для указанных таблиц
+            if ((tableName == "users" && columnName == "user_id") ||
+                (tableName == "channels" && columnName == "channel_id") ||
+                (tableName == "videos" && columnName == "video_id")) {
+                continue; // Пропускаем столбец
+            }
+            columnNames.push_back(columnName);
         }
     }
+
     // Добавляем столбцы в DataTable
     for (const auto& columnName : columnNames) {
         if (columnName == "preview_image") {
-            // Настройка столбца для изображений
             System::Windows::Forms::DataGridViewImageColumn^ imageColumn =
                 gcnew System::Windows::Forms::DataGridViewImageColumn();
             imageColumn->Name = gcnew String(columnName.c_str());
             imageColumn->HeaderText = gcnew String(columnName.c_str());
-            imageColumn->DefaultCellStyle->BackColor = System::Drawing::Color::LightGray;
-            imageColumn->DefaultCellStyle->Alignment =
-                System::Windows::Forms::DataGridViewContentAlignment::MiddleCenter;
-            imageColumn->AutoSizeMode =
-                System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
-            imageColumn->ImageLayout =
-                System::Windows::Forms::DataGridViewImageCellLayout::Stretch;
+            imageColumn->ImageLayout = System::Windows::Forms::DataGridViewImageCellLayout::Stretch;
             dataGridView->Columns->Add(imageColumn);
         }
         else {
-            // Обычные столбцы
             System::Windows::Forms::DataGridViewTextBoxColumn^ textColumn =
                 gcnew System::Windows::Forms::DataGridViewTextBoxColumn();
             textColumn->Name = gcnew String(columnName.c_str());
             textColumn->HeaderText = gcnew String(columnName.c_str());
-            textColumn->AutoSizeMode =
-                System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
+            textColumn->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
             dataGridView->Columns->Add(textColumn);
         }
     }
+
     // Выполняем SQL-запрос для получения данных
-    std::string dataQuery = "SELECT * FROM " + tableName + ";";
+    std::string dataQuery = "SELECT ";
+    std::string columnsPart;
+    for (size_t i = 0; i < columnNames.size(); ++i) {
+        if (i > 0) columnsPart += ", ";
+        columnsPart += columnNames[i];
+    }
+    dataQuery += columnsPart + " FROM " + tableName + ";";
+
     sqlite3_stmt* stmt;
     int result = sqlite3_prepare_v2(db, dataQuery.c_str(), -1, &stmt, nullptr);
     if (result != SQLITE_OK) {
-        MessageBox::Show(gcnew String(("Ошибка подготовки запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка");
+        std::cerr << "Ошибка подготовки запроса: " << sqlite3_errmsg(db) << std::endl;
         return false;
     }
+
     int columnCount = sqlite3_column_count(stmt);
     while ((result = sqlite3_step(stmt)) == SQLITE_ROW) {
         System::Windows::Forms::DataGridViewRow^ row =
             gcnew System::Windows::Forms::DataGridViewRow();
         row->CreateCells(dataGridView);
+
         for (int i = 0; i < columnCount; ++i) {
-            if (columnNames[i] == "preview_image") {
+            std::string currentColumnName = columnNames[i];
+            if (currentColumnName == "preview_image") {
+                // Обработка BLOB-изображений
                 const void* blobData = sqlite3_column_blob(stmt, i);
                 int blobSize = sqlite3_column_bytes(stmt, i);
                 if (blobData && blobSize > 0) {
