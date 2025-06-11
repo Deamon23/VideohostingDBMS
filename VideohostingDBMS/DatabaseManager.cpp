@@ -19,13 +19,15 @@ bool fileExists(const std::string& filename) {
 bool DatabaseManager::connect(const std::string& dbPath) {
     disconnect();
     if (!fileExists(dbPath)) {
-        MessageBox::Show(gcnew String(("Ошибка подключения: файл '" + dbPath + "' не найден в указанном каталоге").c_str()), "Ошибка");
+        MessageBox::Show(gcnew String(("Ошибка подключения: файл '" + dbPath + "' не найден в указанном каталоге").c_str()), "Ошибка",
+            MessageBoxButtons::OK, MessageBoxIcon::Error);
         isConnected = false;
         return false;
     }
     int result = sqlite3_open(dbPath.c_str(), &db);
     if (result != SQLITE_OK) {
-        MessageBox::Show(gcnew String(("Ошибка подключения: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка");
+        MessageBox::Show(gcnew String(("Ошибка подключения: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка",
+            MessageBoxButtons::OK, MessageBoxIcon::Error);
         sqlite3_close(db);
         db = nullptr;
         isConnected = false;
@@ -46,13 +48,15 @@ void DatabaseManager::disconnect() {
 std::vector<std::vector<std::string>> DatabaseManager::executeQuery(const std::string& query) {
     std::vector<std::vector<std::string>> resultData;
     if (!isConnected) {
-        MessageBox::Show("База данных не подключена", "Ошибка");
+        MessageBox::Show("База данных не подключена", "Ошибка",
+            MessageBoxButtons::OK, MessageBoxIcon::Error);
         return resultData;
     }
     sqlite3_stmt* stmt;
     int result = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr);
     if (result != SQLITE_OK) {
-        MessageBox::Show(gcnew String(("Ошибка при подготовке запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка");
+        MessageBox::Show(gcnew String(("Ошибка при подготовке запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка",
+            MessageBoxButtons::OK, MessageBoxIcon::Error);
         return resultData;
     }
     int columnCount = sqlite3_column_count(stmt);
@@ -79,7 +83,8 @@ std::vector<std::vector<std::string>> DatabaseManager::executeQuery(const std::s
         resultData.push_back(row);
     }
     if (result != SQLITE_DONE) {
-        MessageBox::Show(gcnew String(("Ошибка при выполнении запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка");
+        MessageBox::Show(gcnew String(("Ошибка при выполнении запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка",
+            MessageBoxButtons::OK, MessageBoxIcon::Error);
     }
     sqlite3_finalize(stmt);
     return resultData;
@@ -98,13 +103,15 @@ std::vector<unsigned char> readFile(const std::string& filename) {
 
 bool DatabaseManager::executeNonQuery(const std::string& query, const std::vector<std::string>& params) {
     if (!isConnected) {
-        MessageBox::Show("База данных не подключена", "Ошибка");
+        MessageBox::Show("База данных не подключена", "Ошибка",
+            MessageBoxButtons::OK, MessageBoxIcon::Error);
         return false;
     }
     sqlite3_stmt* stmt;
     int result = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr);
     if (result != SQLITE_OK) {
-        MessageBox::Show(gcnew String(("Ошибка подготовки запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка");
+        MessageBox::Show(gcnew String(("Ошибка подготовки запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка",
+            MessageBoxButtons::OK, MessageBoxIcon::Error);
         return false;
     }
     // Привязка параметров
@@ -144,7 +151,8 @@ bool DatabaseManager::executeNonQuery(const std::string& query, const std::vecto
     }
     result = sqlite3_step(stmt);
     if (result != SQLITE_DONE) {
-        MessageBox::Show(gcnew String(("Ошибка выполнения запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка");
+        MessageBox::Show(gcnew String(("Ошибка выполнения запроса: " + std::string(sqlite3_errmsg(db))).c_str()), "Ошибка",
+            MessageBoxButtons::OK, MessageBoxIcon::Error);
         sqlite3_finalize(stmt);
         return false;
     }
@@ -163,27 +171,27 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
     dataGridView->DataSource = nullptr;
     dataGridView->Columns->Clear();
 
-    // Создаем новую DataTable
-    System::Data::DataTable^ table = gcnew System::Data::DataTable();
-
     // Получаем информацию о столбцах
     std::string columnsQuery = "PRAGMA table_info(" + tableName + ");";
     std::vector<std::string> columnNames;
+    std::vector<std::string> displayedColumnNames;
     auto columnRows = executeQuery(columnsQuery);
     for (const auto& row : columnRows) {
         if (row.size() >= 2) {
             std::string columnName = row[1];
-            // Исключаем первичные ключи для указанных таблиц
+            columnNames.push_back(columnName);
+
+            // Исключаем первичные ключи из отображения
             if ((tableName == "users" && columnName == "user_id") ||
                 (tableName == "channels" && columnName == "channel_id") ||
                 (tableName == "videos" && columnName == "video_id")) {
-                continue; // Пропускаем столбец
+                continue; // Пропускаем отображение
             }
-            columnNames.push_back(columnName);
+            displayedColumnNames.push_back(columnName);
         }
     }
 
-    // Добавляем столбцы в DataTable
+    // Добавляем все столбцы (включая первичный ключ как скрытый)
     for (const auto& columnName : columnNames) {
         if (columnName == "preview_image") {
             System::Windows::Forms::DataGridViewImageColumn^ imageColumn =
@@ -199,18 +207,22 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
             textColumn->Name = gcnew String(columnName.c_str());
             textColumn->HeaderText = gcnew String(columnName.c_str());
             textColumn->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
+
+            // Скрываем только первичные ключи
+            bool isHidden = false;
+            if ((tableName == "users" && columnName == "user_id") ||
+                (tableName == "channels" && columnName == "channel_id") ||
+                (tableName == "videos" && columnName == "video_id")) {
+                textColumn->Visible = false;
+                isHidden = true;
+            }
+
             dataGridView->Columns->Add(textColumn);
         }
     }
 
     // Выполняем SQL-запрос для получения данных
-    std::string dataQuery = "SELECT ";
-    std::string columnsPart;
-    for (size_t i = 0; i < columnNames.size(); ++i) {
-        if (i > 0) columnsPart += ", ";
-        columnsPart += columnNames[i];
-    }
-    dataQuery += columnsPart + " FROM " + tableName + ";";
+    std::string dataQuery = "SELECT * FROM " + tableName + ";";
 
     sqlite3_stmt* stmt;
     int result = sqlite3_prepare_v2(db, dataQuery.c_str(), -1, &stmt, nullptr);
@@ -227,8 +239,8 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
 
         for (int i = 0; i < columnCount; ++i) {
             std::string currentColumnName = columnNames[i];
+
             if (currentColumnName == "preview_image") {
-                // Обработка BLOB-изображений
                 const void* blobData = sqlite3_column_blob(stmt, i);
                 int blobSize = sqlite3_column_bytes(stmt, i);
                 if (blobData && blobSize > 0) {
@@ -242,8 +254,7 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
                         System::Drawing::Image^ image = System::Drawing::Image::FromStream(ms);
                         row->Cells[i]->Value = image;
                     }
-                    catch (Exception^ ex) {
-                        Console::WriteLine("Ошибка загрузки изображения: " + ex->Message);
+                    catch (...) {
                         row->Cells[i]->Value = nullptr;
                     }
                 }
@@ -270,8 +281,10 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
                 }
             }
         }
+
         dataGridView->Rows->Add(row);
     }
+
     sqlite3_finalize(stmt);
     return true;
 }

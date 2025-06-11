@@ -166,15 +166,9 @@ namespace VideohostingDBMS {
                 std::string dbPath = msclr::interop::marshal_as<std::string>(dbPathTextBox->Text);
 
                 if (dbManager->connect(dbPath)) {
-
                     TablesComboBox->SelectedItem = L"users";
                     addButton->Enabled = true;
                     deleteButton->Enabled = true;
-
-                }
-                else {
-                    MessageBox::Show("Не удалось подключиться к базе данных!", "Ошибка",
-                        MessageBoxButtons::OK, MessageBoxIcon::Error);
                 }
             }
             catch (Exception^ ex) {
@@ -340,9 +334,10 @@ namespace VideohostingDBMS {
                 }
 
                 DataGridViewRow^ selectedRow = dataGridView1->SelectedRows[0];
-                Object^ pkValue = selectedRow->Cells[currentTablePK]->Value;
 
-                if (pkValue == nullptr) {
+                // Получаем значение первичного ключа из скрытого столбца
+                Object^ pkValue = selectedRow->Cells[currentTablePK]->Value;
+                if (pkValue == nullptr || pkValue->ToString()->Length == 0) {
                     MessageBox::Show("Не удалось получить значение первичного ключа!", "Ошибка");
                     return;
                 }
@@ -363,7 +358,8 @@ namespace VideohostingDBMS {
                 }
             }
             catch (Exception^ ex) {
-                MessageBox::Show("Ошибка: " + ex->Message, "Ошибка");
+                MessageBox::Show("Ошибка: " + ex->Message, "Ошибка",
+                    MessageBoxButtons::OK, MessageBoxIcon::Error);
             }
         }
 
@@ -375,17 +371,16 @@ namespace VideohostingDBMS {
                     return;
                 }
 
-                std::string viewName = msclr::interop::marshal_as<std::string>(TablesComboBox->SelectedItem->ToString());
+                std::string tableName = msclr::interop::marshal_as<std::string>(TablesComboBox->SelectedItem->ToString());
 
                 // Получить информацию о первичном ключе
-                std::string pkQuery = "PRAGMA table_info(" + viewName + ");";
+                std::string pkQuery = "PRAGMA table_info(" + tableName + ");";
                 std::vector<std::vector<std::string>> rows = dbManager->executeQuery(pkQuery);
 
-                // Определить имя первичного ключа
                 std::string pkName;
                 for (const auto& row : rows) {
                     if (row.size() >= 6 && row[5] == "1") { // Столбец 'pk' равен 1
-                        pkName = row[1]; // Имя столбца
+                        pkName = row[1]; // Имя столбца-первичного ключа
                         break;
                     }
                 }
@@ -393,7 +388,7 @@ namespace VideohostingDBMS {
                 currentTablePK = pkName.empty() ? "" : gcnew String(pkName.c_str());
 
                 // Загрузить данные в DataGridView
-                if (dbManager->fillDataGridViewFromTable(dataGridView1, viewName)) {
+                if (dbManager->fillDataGridViewFromTable(dataGridView1, tableName)) {
                     // Успешно загружено
                 }
                 else {
