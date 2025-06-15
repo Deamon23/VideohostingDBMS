@@ -171,27 +171,51 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
     dataGridView->DataSource = nullptr;
     dataGridView->Columns->Clear();
 
-    // Получаем информацию о столбцах
-    std::string columnsQuery = "PRAGMA table_info(" + tableName + ");";
-    std::vector<std::string> columnNames;
-    std::vector<std::string> displayedColumnNames;
-    auto columnRows = executeQuery(columnsQuery);
-    for (const auto& row : columnRows) {
-        if (row.size() >= 2) {
-            std::string columnName = row[1];
-            columnNames.push_back(columnName);
+    // Проверяем, является ли таблица вспомогательной
+    bool isSubscriptionTable = (tableName == "subscriptions");
+    bool isLikedVideosTable = (tableName == "liked_videos");
 
-            // Исключаем первичные ключи из отображения
-            if ((tableName == "users" && columnName == "user_id") ||
-                (tableName == "channels" && columnName == "channel_id") ||
-                (tableName == "videos" && columnName == "video_id")) {
-                continue; // Пропускаем отображение
+    std::vector<std::string> columnNames;
+    std::string dataQuery;
+
+    // Формируем SQL-запрос
+    if (isSubscriptionTable) {
+        dataQuery = R"(
+            SELECT s.channel_id, c.channel_name, s.user_id, u.username
+            FROM subscriptions s
+            JOIN channels c ON s.channel_id = c.channel_id
+            JOIN users u ON s.user_id = u.user_id;
+        )";
+        columnNames = { "channel_id", "channel_name", "user_id", "username" };
+    }
+    else if (isLikedVideosTable) {
+        dataQuery = R"(
+            SELECT l.video_id, v.video_name, l.user_id, u.username
+            FROM liked_videos l
+            JOIN videos v ON l.video_id = v.video_id
+            JOIN users u ON l.user_id = u.user_id;
+        )";
+        columnNames = { "video_id", "video_name", "user_id", "username" };
+    }
+    else {
+        // Обычный запрос для других таблиц
+        std::string columnsQuery = "PRAGMA table_info(" + tableName + ");";
+        auto columnRows = executeQuery(columnsQuery);
+        for (const auto& row : columnRows) {
+            if (row.size() >= 2) {
+                columnNames.push_back(row[1]);
             }
-            displayedColumnNames.push_back(columnName);
         }
+        dataQuery = "SELECT ";
+        std::string columnsPart;
+        for (size_t i = 0; i < columnNames.size(); ++i) {
+            if (i > 0) columnsPart += ", ";
+            columnsPart += columnNames[i];
+        }
+        dataQuery += columnsPart + " FROM " + tableName + ";";
     }
 
-    // Добавляем все столбцы (включая первичный ключ как скрытый)
+    // Добавляем столбцы в DataGridView
     for (const auto& columnName : columnNames) {
         if (columnName == "preview_image") {
             System::Windows::Forms::DataGridViewImageColumn^ imageColumn =
@@ -207,23 +231,11 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
             textColumn->Name = gcnew String(columnName.c_str());
             textColumn->HeaderText = gcnew String(columnName.c_str());
             textColumn->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
-
-            // Скрываем только первичные ключи
-            bool isHidden = false;
-            if ((tableName == "users" && columnName == "user_id") ||
-                (tableName == "channels" && columnName == "channel_id") ||
-                (tableName == "videos" && columnName == "video_id")) {
-                textColumn->Visible = false;
-                isHidden = true;
-            }
-
             dataGridView->Columns->Add(textColumn);
         }
     }
 
-    // Выполняем SQL-запрос для получения данных
-    std::string dataQuery = "SELECT * FROM " + tableName + ";";
-
+    // Выполняем SQL-запрос
     sqlite3_stmt* stmt;
     int result = sqlite3_prepare_v2(db, dataQuery.c_str(), -1, &stmt, nullptr);
     if (result != SQLITE_OK) {
@@ -238,9 +250,7 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
         row->CreateCells(dataGridView);
 
         for (int i = 0; i < columnCount; ++i) {
-            std::string currentColumnName = columnNames[i];
-
-            if (currentColumnName == "preview_image") {
+            if (columnNames[i] == "preview_image") {
                 const void* blobData = sqlite3_column_blob(stmt, i);
                 int blobSize = sqlite3_column_bytes(stmt, i);
                 if (blobData && blobSize > 0) {
@@ -281,7 +291,6 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
                 }
             }
         }
-
         dataGridView->Rows->Add(row);
     }
 
@@ -289,16 +298,59 @@ bool DatabaseManager::fillDataGridViewFromTable(System::Windows::Forms::DataGrid
     return true;
 }
 
-std::vector<std::string> DatabaseManager::getColumnValues(const std::string& tableName, const std::string& columnName) {
+std::vector<std::string> DatabaseManager::getColumnValues(const std::string& tableName, const std::string& columnName, const std::string& filterColumn) {
     std::vector<std::string> values;
     if (!isConnected) return values;
-    std::string query = "SELECT " + columnName + " FROM " + tableName + " ORDER BY " + columnName + " ASC;";
+
+    std::string query = "SELECT " + columnName + " FROM " + tableName;
+    if (!filterColumn.empty()) {
+        query += " ORDER BY " + filterColumn;
+    }
+    query += ";";
+
     sqlite3_stmt* stmt;
     int result = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr);
     if (result != SQLITE_OK) return values;
+
     while ((result = sqlite3_step(stmt)) == SQLITE_ROW) {
         values.push_back(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
     }
     sqlite3_finalize(stmt);
     return values;
+}
+
+std::vector<std::string> DatabaseManager::getChannelNames() {
+    std::vector<std::string> names;
+    if (!isConnected) return names;
+
+    std::string query = "SELECT channel_name FROM channels;";
+    auto result = executeQuery(query);
+    for (const auto& row : result) {
+        names.push_back(row[0]);
+    }
+    return names;
+}
+
+std::vector<std::string> DatabaseManager::getUsernames() {
+    std::vector<std::string> names;
+    if (!isConnected) return names;
+
+    std::string query = "SELECT username FROM users;";
+    auto result = executeQuery(query);
+    for (const auto& row : result) {
+        names.push_back(row[0]);
+    }
+    return names;
+}
+
+std::vector<std::string> DatabaseManager::getVideoNames() {
+    std::vector<std::string> names;
+    if (!isConnected) return names;
+
+    std::string query = "SELECT video_name FROM videos;";
+    auto result = executeQuery(query);
+    for (const auto& row : result) {
+        names.push_back(row[0]);
+    }
+    return names;
 }

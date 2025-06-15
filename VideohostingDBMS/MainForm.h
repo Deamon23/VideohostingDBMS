@@ -202,17 +202,14 @@ namespace VideohostingDBMS {
                 Dictionary<String^, List<String^>^>^ dropdownData = gcnew Dictionary<String^, List<String^>^>();
 
                 if (table == "users") {
-                    // Только username вводится вручную
                     for (const auto& col : columnNames) {
                         if (col == "username") filteredColumns.push_back(col);
                     }
                 }
                 else if (table == "channels") {
-                    // channel_name и creator_id (выбор из существующих user_id)
                     for (const auto& col : columnNames) {
                         if (col == "channel_name" || col == "creator_id") filteredColumns.push_back(col);
                     }
-                    // Получаем список user_id для ComboBox
                     auto userIds = dbManager->getColumnValues("users", "user_id");
                     List<String^>^ userList = gcnew List<String^>();
                     for (const auto& id : userIds) {
@@ -221,50 +218,57 @@ namespace VideohostingDBMS {
                     dropdownData["creator_id"] = userList;
                 }
                 else if (table == "subscriptions") {
-                    // Выбор из существующих channel_id и user_id
-                    for (const auto& col : columnNames) {
-                        if (col == "channel_id" || col == "user_id") filteredColumns.push_back(col);
-                    }
-                    // Получаем channel_id и user_id
-                    auto channelIds = dbManager->getColumnValues("channels", "channel_id");
-                    auto userIds = dbManager->getColumnValues("users", "user_id");
+                    filteredColumns.push_back("channel_name");
+                    filteredColumns.push_back("username");
+
+                    auto channelNames = dbManager->getChannelNames();
+                    auto usernames = dbManager->getUsernames();
+
                     List<String^>^ channelList = gcnew List<String^>();
+                    for (const auto& name : channelNames) {
+                        channelList->Add(gcnew String(name.c_str()));
+                    }
+                    dropdownData["channel_name"] = channelList;
+
                     List<String^>^ userList = gcnew List<String^>();
-                    for (const auto& id : channelIds) channelList->Add(gcnew String(id.c_str()));
-                    for (const auto& id : userIds) userList->Add(gcnew String(id.c_str()));
-                    dropdownData["channel_id"] = channelList;
-                    dropdownData["user_id"] = userList;
+                    for (const auto& name : usernames) {
+                        userList->Add(gcnew String(name.c_str()));
+                    }
+                    dropdownData["username"] = userList;
                 }
                 else if (table == "videos") {
-                    // video_name, preview_image, number_of_views, channel_id (выбор из существующих)
                     for (const auto& col : columnNames) {
                         if (col == "video_name" || col == "preview_image" || col == "number_of_views" || col == "channel_id") {
                             filteredColumns.push_back(col);
                         }
                     }
-                    // Получаем channel_id
                     auto channelIds = dbManager->getColumnValues("channels", "channel_id");
                     List<String^>^ channelList = gcnew List<String^>();
-                    for (const auto& id : channelIds) channelList->Add(gcnew String(id.c_str()));
+                    for (const auto& id : channelIds) {
+                        channelList->Add(gcnew String(id.c_str()));
+                    }
                     dropdownData["channel_id"] = channelList;
                 }
                 else if (table == "liked_videos") {
-                    // Выбор из существующих video_id и user_id
-                    for (const auto& col : columnNames) {
-                        if (col == "video_id" || col == "user_id") filteredColumns.push_back(col);
-                    }
-                    // Получаем video_id и user_id
-                    auto videoIds = dbManager->getColumnValues("videos", "video_id");
-                    auto userIds = dbManager->getColumnValues("users", "user_id");
+                    filteredColumns.push_back("video_name");
+                    filteredColumns.push_back("username");
+
+                    auto videoNames = dbManager->getVideoNames();
+                    auto usernames = dbManager->getUsernames();
+
                     List<String^>^ videoList = gcnew List<String^>();
+                    for (const auto& name : videoNames) {
+                        videoList->Add(gcnew String(name.c_str()));
+                    }
+                    dropdownData["video_name"] = videoList;
+
                     List<String^>^ userList = gcnew List<String^>();
-                    for (const auto& id : videoIds) videoList->Add(gcnew String(id.c_str()));
-                    for (const auto& id : userIds) userList->Add(gcnew String(id.c_str()));
-                    dropdownData["video_id"] = videoList;
-                    dropdownData["user_id"] = userList;
+                    for (const auto& name : usernames) {
+                        userList->Add(gcnew String(name.c_str()));
+                    }
+                    dropdownData["username"] = userList;
                 }
                 else {
-                    // Для других таблиц используем все столбцы
                     filteredColumns = columnNames;
                 }
 
@@ -273,13 +277,11 @@ namespace VideohostingDBMS {
                     return;
                 }
 
-                // Преобразовать в управляемый список
                 List<String^>^ columnNamesList = gcnew List<String^>();
                 for (const auto& name : filteredColumns) {
                     columnNamesList->Add(gcnew String(name.c_str()));
                 }
 
-                // Показать форму для ввода данных
                 AddRecordForm^ addForm = gcnew AddRecordForm(columnNamesList, dropdownData);
                 if (addForm->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
                     List<String^>^ values = addForm->Values;
@@ -288,19 +290,42 @@ namespace VideohostingDBMS {
                         params.push_back(msclr::interop::marshal_as<std::string>(value));
                     }
 
-                    // Сформировать SQL-запрос
                     std::string columnsPart = "";
                     std::string valuesPart = "";
-                    for (size_t i = 0; i < filteredColumns.size(); ++i) {
-                        if (i > 0) {
-                            columnsPart += ", ";
-                            valuesPart += ", ";
+                    std::string sql;
+
+                    if (table == "subscriptions") {
+                        // Преобразование channel_name и username в channel_id и user_id
+                        std::string channelName = params[0];
+                        std::string username = params[1];
+
+                        sql = "INSERT INTO subscriptions (channel_id, user_id) "
+                            "SELECT c.channel_id, u.user_id "
+                            "FROM channels c, users u "
+                            "WHERE c.channel_name = ? AND u.username = ?";
+                    }
+                    else if (table == "liked_videos") {
+                        // Преобразование video_name и username в video_id и user_id
+                        std::string videoName = params[0];
+                        std::string username = params[1];
+
+                        sql = "INSERT INTO liked_videos (video_id, user_id) "
+                            "SELECT v.video_id, u.user_id "
+                            "FROM videos v, users u "
+                            "WHERE v.video_name = ? AND u.username = ?";
+                    }
+                    else {
+                        for (size_t i = 0; i < filteredColumns.size(); ++i) {
+                            if (i > 0) {
+                                columnsPart += ", ";
+                                valuesPart += ", ";
+                            }
+                            columnsPart += filteredColumns[i];
+                            valuesPart += "?";
                         }
-                        columnsPart += filteredColumns[i];
-                        valuesPart += "?";
+                        sql = "INSERT INTO " + table + " (" + columnsPart + ") VALUES (" + valuesPart + ")";
                     }
 
-                    std::string sql = "INSERT INTO " + table + " (" + columnsPart + ") VALUES (" + valuesPart + ")";
                     if (!dbManager->executeNonQuery(sql, params)) {
                         MessageBox::Show("Ошибка добавления записи!", "Ошибка");
                     }
@@ -333,21 +358,34 @@ namespace VideohostingDBMS {
                     return;
                 }
 
-                DataGridViewRow^ selectedRow = dataGridView1->SelectedRows[0];
+                // Получаем таблицу и первичные ключи
+                String^ tableName = TablesComboBox->SelectedItem->ToString();
+                std::string table = msclr::interop::marshal_as<std::string>(tableName);
+                array<String^>^ pkNames = currentTablePK->Split(',');
 
-                // Получаем значение первичного ключа из скрытого столбца
-                Object^ pkValue = selectedRow->Cells[currentTablePK]->Value;
-                if (pkValue == nullptr || pkValue->ToString()->Length == 0) {
-                    MessageBox::Show("Не удалось получить значение первичного ключа!", "Ошибка");
-                    return;
+                // Получаем значения первичных ключей из выбранной строки
+                DataGridViewRow^ selectedRow = dataGridView1->SelectedRows[0];
+                std::string whereClause;
+                std::vector<std::string> params;
+
+                for (int i = 0; i < pkNames->Length; ++i) {
+                    String^ pkName = pkNames[i]->Trim();
+                    Object^ pkValue = selectedRow->Cells[pkName]->Value;
+
+                    if (pkValue == nullptr || pkValue->ToString()->Length == 0) {
+                        MessageBox::Show("Не удалось получить значение первичного ключа!", "Ошибка");
+                        return;
+                    }
+
+                    std::string colName = msclr::interop::marshal_as<std::string>(pkName);
+                    std::string valueStr = msclr::interop::marshal_as<std::string>(pkValue->ToString());
+
+                    if (i > 0) whereClause += " AND ";
+                    whereClause += colName + " = ?";
+                    params.push_back(valueStr);
                 }
 
-                std::string table = msclr::interop::marshal_as<std::string>(TablesComboBox->SelectedItem->ToString());
-                std::string valueStr = msclr::interop::marshal_as<std::string>(pkValue->ToString());
-
-                std::string sql = "DELETE FROM " + table + " WHERE " +
-                    msclr::interop::marshal_as<std::string>(currentTablePK->ToString()) + " = ?";
-                std::vector<std::string> params = { valueStr };
+                std::string sql = "DELETE FROM " + table + " WHERE " + whereClause + ";";
 
                 if (!dbManager->executeNonQuery(sql, params)) {
                     MessageBox::Show("Ошибка удаления записи!", "Ошибка");
@@ -358,8 +396,7 @@ namespace VideohostingDBMS {
                 }
             }
             catch (Exception^ ex) {
-                MessageBox::Show("Ошибка: " + ex->Message, "Ошибка",
-                    MessageBoxButtons::OK, MessageBoxIcon::Error);
+                MessageBox::Show("Ошибка: " + ex->Message, "Ошибка");
             }
         }
 
@@ -373,19 +410,31 @@ namespace VideohostingDBMS {
 
                 std::string tableName = msclr::interop::marshal_as<std::string>(TablesComboBox->SelectedItem->ToString());
 
-                // Получить информацию о первичном ключе
+                // Получаем информацию о первичном ключе
                 std::string pkQuery = "PRAGMA table_info(" + tableName + ");";
-                std::vector<std::vector<std::string>> rows = dbManager->executeQuery(pkQuery);
+                auto rows = dbManager->executeQuery(pkQuery);
+                std::vector<std::string> pkColumns;
 
-                std::string pkName;
                 for (const auto& row : rows) {
                     if (row.size() >= 6 && row[5] == "1") { // Столбец 'pk' равен 1
-                        pkName = row[1]; // Имя столбца-первичного ключа
-                        break;
+                        pkColumns.push_back(row[1]); // Имя столбца
                     }
                 }
 
-                currentTablePK = pkName.empty() ? "" : gcnew String(pkName.c_str());
+                // Явное указание составных ключей
+                if (tableName == "subscriptions") {
+                    pkColumns = { "channel_id", "user_id" };
+                }
+                else if (tableName == "liked_videos") {
+                    pkColumns = { "video_id", "user_id" };
+                }
+
+                // Сохраняем имя первичного ключа (или нескольких)
+                currentTablePK = "";
+                for (size_t i = 0; i < pkColumns.size(); ++i) {
+                    if (i > 0) currentTablePK += ",";
+                    currentTablePK += gcnew String(pkColumns[i].c_str());
+                }
 
                 // Загрузить данные в DataGridView
                 if (dbManager->fillDataGridViewFromTable(dataGridView1, tableName)) {
